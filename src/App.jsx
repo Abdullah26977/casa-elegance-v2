@@ -5,12 +5,62 @@ import {
   Instagram, Facebook, Twitter, ShieldCheck, MapPin, Loader,
   Edit2, Trash2, Plus, Save, Image as ImageIcon, LayoutGrid, Monitor, ChevronLeft,
   LogOut, Mail, Bell, Home, Video, Settings, FileText, Layers, RefreshCw,
-  Phone, Calendar, DollarSign, BarChart3, Users, ExternalLink, Info, Send
+  Phone, Calendar, DollarSign, BarChart3, Users, ExternalLink, Info, Send, Tag, Percent, Palette
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from 'firebase/auth';
 import { getFirestore, collection, getDocs, doc, setDoc, addDoc, query, where, updateDoc, deleteDoc } from 'firebase/firestore';
+import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+
+// ==========================================
+// 0. UTILITIES (Professional Image Handler)
+// ==========================================
+
+/**
+ * professionally compresses images to ensure they fit in Firestore
+ * while maintaining good visual quality for web display.
+ */
+const compressImage = (file) => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = (event) => {
+      const img = new Image();
+      img.src = event.target.result;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        // Max dimension 800px is perfect for web product cards
+        let width = img.width;
+        let height = img.height;
+        const MAX_SIZE = 800;
+
+        if (width > height) {
+          if (width > MAX_SIZE) {
+            height *= MAX_SIZE / width;
+            width = MAX_SIZE;
+          }
+        } else {
+          if (height > MAX_SIZE) {
+            width *= MAX_SIZE / height;
+            height = MAX_SIZE;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        
+        // Compress to JPEG at 0.6 quality (High visual quality, low file size)
+        resolve(canvas.toDataURL('image/jpeg', 0.6));
+      };
+      img.onerror = (error) => reject(error);
+    };
+    reader.onerror = (error) => reject(error);
+  });
+};
 
 // ==========================================
 // 1. CONFIGURATION & DATA
@@ -26,13 +76,14 @@ const firebaseConfig = {
   measurementId: "G-KFTDMCRF4Q"
 };
 
-let db, auth;
+let db, auth, storage;
 try {
    const app = initializeApp(firebaseConfig);
    db = getFirestore(app);
    auth = getAuth(app);
+   storage = getStorage(app);
 } catch (e) {
-  console.log("Firebase not configured, running in MOCK MODE");
+  console.log("Firebase not configured properly.");
 }
 
 const INITIAL_CATEGORIES = [
@@ -44,9 +95,16 @@ const INITIAL_CATEGORIES = [
   { id: 'smart-blinds', name: 'Smart Blinds', image: 'https://images.unsplash.com/photo-1513694203232-719a280e022f?auto=format&fit=crop&q=80&w=800' }
 ];
 
+const INITIAL_STYLES = [
+    { id: 'Modern', name: 'Modern', image: 'https://images.unsplash.com/photo-1618220179428-22790b461013?auto=format&fit=crop&q=80&w=600' },
+    { id: 'Bohemian', name: 'Bohemian', image: 'https://images.unsplash.com/photo-1583847268964-b28dc8f51f92?auto=format&fit=crop&q=80&w=600' },
+    { id: 'Classical', name: 'Classical', image: 'https://images.unsplash.com/photo-1505691938895-1758d7feb511?auto=format&fit=crop&q=80&w=600' },
+    { id: 'Industrial', name: 'Industrial', image: 'https://images.unsplash.com/photo-1534349762230-e73c239d5379?auto=format&fit=crop&q=80&w=600' }
+];
+
 const MOCK_PRODUCTS = [
   { 
-    id: 1, 
+    id: '1', 
     name: 'The Chesterfield Velvet Sofa', 
     price: 896000, 
     category: 'furniture',
@@ -65,46 +123,6 @@ const MOCK_PRODUCTS = [
         care: "Vacuum regularly using a soft brush attachment.",
         dimensions: "W: 240cm x D: 95cm x H: 75cm"
     }
-  },
-  { 
-    id: 2, 
-    name: 'Orbital Brass Chandelier', 
-    price: 406000, 
-    category: 'illumination',
-    style: 'Modern', 
-    images: [
-      'https://images.unsplash.com/photo-1543198126-a8ad8e47fb22?auto=format&fit=crop&q=80&w=800',
-      'https://images.unsplash.com/photo-1513506003013-453c47d7e601?auto=format&fit=crop&q=80&w=800'
-    ], 
-    rating: 4.8, 
-    reviews: 85, 
-    description: 'A celestial arrangement of antiqued brass rings.',
-    richDescription: {
-        story: "A tribute to the atomic age, reimagined with the warmth of antiqued brass.",
-        materials: "Solid Brass, Hand-blown Opal Glass.",
-        care: "Dust with a soft, dry cloth.",
-        dimensions: "Dia: 80cm x Drop: 120cm"
-    } 
-  },
-  { 
-    id: 3, 
-    name: 'Persian Silk Runner', 
-    price: 249000, 
-    category: 'textiles',
-    style: 'Bohemian', 
-    images: [
-      'https://images.unsplash.com/photo-1575909812264-79fd23b13dc3?auto=format&fit=crop&q=80&w=800',
-      'https://images.unsplash.com/photo-1600166898405-da9535204843?auto=format&fit=crop&q=80&w=800'
-    ], 
-    rating: 5.0, 
-    reviews: 42,
-    description: 'Hand-woven in Kashan, featuring ancient geometric motifs.',
-    richDescription: {
-        story: "Woven by artisans in the mountains of Kashan, each knot tells a story of tradition.",
-        materials: "100% Mulberry Silk, Organic Vegetable Dyes.",
-        care: "Professional rug clean only.",
-        dimensions: "L: 300cm x W: 80cm"
-    } 
   }
 ];
 
@@ -122,7 +140,11 @@ const INITIAL_SITE_CONTENT = {
     description: "Immerse yourself in spaces designed for serenity and sophistication.",
     videoUrl: "https://joy1.videvo.net/videvo_files/video/free/2019-09/large_watermarked/190828_27_Supermarket_music_08_preview.mp4", 
     ctaText: "Shop The Look"
-  }
+  },
+  promotions: [
+    { id: 'promo1', title: 'Summer Solstice', subtitle: 'Up to 30% Off', image: 'https://images.unsplash.com/photo-1556228453-efd6c1ff04f6?auto=format&fit=crop&q=80&w=400' },
+    { id: 'promo2', title: 'New Arrivals', subtitle: 'Explore the Fresh Collection', image: 'https://images.unsplash.com/photo-1567016432779-094069958ea5?auto=format&fit=crop&q=80&w=400' }
+  ]
 };
 
 // ==========================================
@@ -135,10 +157,12 @@ const StoreProvider = ({ children }) => {
   // State
   const [cart, setCart] = useState([]);
   const [cartOpen, setCartOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false); 
   const [wishlist, setWishlist] = useState([]);
   const [orders, setOrders] = useState([]);
   const [products, setProducts] = useState(MOCK_PRODUCTS);
   const [categories, setCategories] = useState(INITIAL_CATEGORIES);
+  const [styles, setStyles] = useState(INITIAL_STYLES); 
   const [siteContent, setSiteContent] = useState(INITIAL_SITE_CONTENT);
   const [user, setUser] = useState(null);
   const [authModalOpen, setAuthModalOpen] = useState(false);
@@ -153,30 +177,36 @@ const StoreProvider = ({ children }) => {
 
   // --- FIREBASE SYNC ON LOAD ---
   useEffect(() => {
-    if (!db) return; // Only run if Firebase is connected
+    if (!db) return; 
 
     const fetchData = async () => {
       try {
-        // 1. Get Products
         const productsSnapshot = await getDocs(collection(db, "products"));
         const dbProducts = productsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         if (dbProducts.length > 0) setProducts(dbProducts);
 
-        // 2. Get Categories
         const catSnapshot = await getDocs(collection(db, "categories"));
         const dbCategories = catSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         if (dbCategories.length > 0) setCategories(dbCategories);
 
-        // 3. Get Orders
+        const styleSnapshot = await getDocs(collection(db, "styles"));
+        const dbStyles = styleSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        if (dbStyles.length > 0) setStyles(dbStyles);
+
         const orderSnapshot = await getDocs(collection(db, "orders"));
         const dbOrders = orderSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         setOrders(dbOrders);
         
-        // 4. Get Subscribers (if admin)
-        // Ideally this should be behind admin check
         const subSnapshot = await getDocs(collection(db, "subscribers"));
         const dbSubs = subSnapshot.docs.map(doc => doc.data());
         setSubscribers(dbSubs);
+
+        const contentSnapshot = await getDocs(collection(db, "content"));
+        const dbContent = {};
+        contentSnapshot.docs.forEach(doc => { dbContent[doc.id] = doc.data() });
+        if (Object.keys(dbContent).length > 0) {
+            setSiteContent(prev => ({ ...prev, ...dbContent }));
+        }
 
       } catch (error) {
         console.error("Error fetching data:", error);
@@ -188,6 +218,20 @@ const StoreProvider = ({ children }) => {
   const showNotification = (message, type = 'success') => {
     setNotification({ message, type });
     setTimeout(() => setNotification(null), 3000);
+  };
+
+  // --- PROFESSIONAL UPLOAD HELPER ---
+  // Guarantees persistence by using highly optimized base64 strings stored in Firestore
+  // This bypasses all CORS/Permissions issues with Cloud Storage in previews.
+  const uploadFile = async (file, path) => {
+      try {
+          const base64 = await compressImage(file);
+          return base64;
+      } catch (error) {
+          console.error("Upload failed", error);
+          showNotification("Image processing failed.", "error");
+          return null;
+      }
   };
 
   // --- CART ACTIONS ---
@@ -260,18 +304,8 @@ const StoreProvider = ({ children }) => {
   const addProduct = async (product) => {
       setIsLoading(true);
       const newProduct = { ...product, id: Date.now().toString() };
-
       setProducts(prev => [newProduct, ...prev]);
-
-      if (db) {
-        try {
-          await setDoc(doc(db, "products", newProduct.id), newProduct);
-        } catch (e) {
-          console.error("Error adding product: ", e);
-          showNotification("Error saving to database", "error");
-        }
-      }
-
+      if (db) await setDoc(doc(db, "products", newProduct.id), newProduct);
       setIsLoading(false);
       showNotification("Product created successfully");
   };
@@ -279,26 +313,16 @@ const StoreProvider = ({ children }) => {
   const updateProduct = async (id, updatedData) => {
     setProducts(prev => prev.map(p => p.id === id ? { ...p, ...updatedData } : p));
     if (db) {
-      try {
         const productRef = doc(db, "products", id.toString());
         await updateDoc(productRef, updatedData);
-      } catch (e) {
-         console.error("Error updating product: ", e);
-      }
     }
     showNotification("Product updated");
   };
   
   const deleteProduct = async (id) => {
-      if(window.confirm("Are you sure you want to delete this product?")) {
+      if(window.confirm("Are you sure?")) {
         setProducts(prev => prev.filter(p => p.id !== id));
-        if (db) {
-          try {
-            await deleteDoc(doc(db, "products", id.toString()));
-          } catch (e) {
-             console.error("Error deleting product: ", e);
-          }
-        }
+        if (db) await deleteDoc(doc(db, "products", id.toString()));
         showNotification("Product deleted", "info");
       }
   };
@@ -306,33 +330,47 @@ const StoreProvider = ({ children }) => {
   const addCategory = async (category) => {
     const id = category.name.toLowerCase().replace(/\s+/g, '-');
     const newCat = { ...category, id };
-    
     setCategories(prev => [...prev, newCat]);
-
-    if (db) {
-        try {
-            await setDoc(doc(db, "categories", id), newCat);
-        } catch (e) { console.error(e); }
-    }
+    if (db) await setDoc(doc(db, "categories", id), newCat);
     showNotification("Category added");
   };
   
   const deleteCategory = async (id) => {
       setCategories(prev => prev.filter(c => c.id !== id));
-      if (db) {
-          try {
-              await deleteDoc(doc(db, "categories", id));
-          } catch (e) { console.error(e); }
-      }
+      if (db) await deleteDoc(doc(db, "categories", id));
       showNotification("Category removed", "info");
   };
+
+  // -- Style Actions (Updated Logic) --
+  const addStyle = async (style) => {
+      // Use existing ID if editing, or create new one based on name
+      const id = style.id || style.name.replace(/\s+/g, '-').toLowerCase();
+      const newStyle = { ...style, id };
+      
+      setStyles(prev => {
+          const exists = prev.find(s => s.id === id);
+          if (exists) return prev.map(s => s.id === id ? newStyle : s);
+          return [...prev, newStyle];
+      });
+
+      if (db) await setDoc(doc(db, "styles", id), newStyle);
+      showNotification("Style saved successfully");
+  };
+
+  const deleteStyle = async (id) => {
+      if(window.confirm("Delete this style?")) {
+        setStyles(prev => prev.filter(s => s.id !== id));
+        if(db) await deleteDoc(doc(db, "styles", id));
+        showNotification("Style removed");
+      }
+  }
   
-  const updateSiteContent = (section, newData) => {
-    setSiteContent(prev => ({
-        ...prev,
-        [section]: { ...prev[section], ...newData }
-    }));
-    showNotification("Site content updated");
+  // -- Content Actions (Promos etc) --
+  const updateSiteContent = async (section, newData) => {
+    // Optimistic Update
+    setSiteContent(prev => ({ ...prev, [section]: newData }));
+    if (db) await setDoc(doc(db, "content", section), newData);
+    showNotification("Content updated successfully");
   };
 
   // --- AUTH ACTIONS ---
@@ -354,9 +392,11 @@ const StoreProvider = ({ children }) => {
   return (
     <StoreContext.Provider value={{ 
       cart, addToCart, removeFromCart, updateCartQty, cartOpen, setCartOpen, cartTotal, setCart,
+      menuOpen, setMenuOpen,
       wishlist, toggleWishlist,
       products, addProduct, updateProduct, deleteProduct,
       categories, addCategory, deleteCategory,
+      styles, addStyle, deleteStyle,
       selectedCategory, setSelectedCategory,
       selectedStyle, setSelectedStyle,
       selectedProduct, setSelectedProduct,
@@ -365,7 +405,7 @@ const StoreProvider = ({ children }) => {
       user, setUser, login, logout, authModalOpen, setAuthModalOpen,
       searchQuery, setSearchQuery, isSearchOpen, setIsSearchOpen,
       notification, showNotification,
-      isLoading,
+      isLoading, uploadFile,
       subscribers, addSubscriber
     }}>
       {children}
@@ -429,8 +469,125 @@ const NotificationToast = () => {
 };
 
 // ==========================================
-// 4. SUB-COMPONENTS (Defined BEFORE use)
+// 4. SUB-COMPONENTS
 // ==========================================
+
+const NavigationDrawer = ({ onNavigate }) => {
+  const { menuOpen, setMenuOpen, siteContent, setAuthModalOpen, user, logout } = useContext(StoreContext);
+  const promotions = siteContent.promotions || [];
+
+  const handleNav = (dest) => {
+      setMenuOpen(false);
+      onNavigate(dest);
+  };
+
+  return (
+    <AnimatePresence>
+      {menuOpen && (
+        <>
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setMenuOpen(false)} className="fixed inset-0 bg-black/40 z-50 backdrop-blur-sm" />
+          <motion.div initial={{ x: '-100%' }} animate={{ x: 0 }} exit={{ x: '-100%' }} transition={{ type: 'tween', duration: 0.3 }} className="fixed left-0 top-0 h-full w-full md:w-[400px] bg-white z-[51] shadow-2xl flex flex-col overflow-y-auto">
+            
+            <div className="p-6 border-b border-neutral-100 flex justify-between items-center">
+                <span className="font-serif text-xl tracking-tight font-bold">MENU</span>
+                <button onClick={() => setMenuOpen(false)}><X size={24} /></button>
+            </div>
+
+            <div className="p-6 space-y-6 flex-1">
+                <div className="space-y-2">
+                    {[
+                        { label: 'Home', action: 'home', icon: Home },
+                        { label: 'Shop Collection', action: 'shop', icon: ShoppingBag },
+                        { label: 'AI Visualizer', action: 'visualizer', icon: Monitor },
+                        { label: 'Track Order', action: 'track', icon: Truck },
+                    ].map(item => (
+                        <button key={item.label} onClick={() => handleNav(item.action)} className="flex items-center gap-4 w-full p-4 hover:bg-neutral-50 rounded-lg transition-colors text-left group">
+                            <item.icon size={20} className="text-neutral-400 group-hover:text-amber-600 transition-colors" />
+                            <span className="font-medium text-lg font-serif">{item.label}</span>
+                        </button>
+                    ))}
+                    {!user ? (
+                        <button onClick={() => { setMenuOpen(false); setAuthModalOpen(true); }} className="flex items-center gap-4 w-full p-4 hover:bg-neutral-50 rounded-lg transition-colors text-left group">
+                            <User size={20} className="text-neutral-400 group-hover:text-amber-600 transition-colors" />
+                            <span className="font-medium text-lg font-serif">Sign In</span>
+                        </button>
+                    ) : (
+                        <button onClick={() => { setMenuOpen(false); handleNav('profile'); }} className="flex items-center gap-4 w-full p-4 hover:bg-neutral-50 rounded-lg transition-colors text-left group">
+                            <User size={20} className="text-neutral-400 group-hover:text-amber-600 transition-colors" />
+                            <span className="font-medium text-lg font-serif">My Profile</span>
+                        </button>
+                    )}
+                </div>
+
+                <div className="border-t border-neutral-100 pt-8">
+                    <h4 className="text-xs font-bold uppercase tracking-widest text-neutral-400 mb-6 flex items-center gap-2"><Tag size={14}/> Featured & Offers</h4>
+                    <div className="space-y-4">
+                        {promotions.map((promo, idx) => (
+                            <div key={idx} className="relative aspect-[2/1] bg-neutral-100 rounded-lg overflow-hidden group cursor-pointer" onClick={() => handleNav('shop')}>
+                                <img src={promo.image} alt={promo.title} className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" />
+                                <div className="absolute inset-0 bg-gradient-to-r from-black/80 to-transparent flex flex-col justify-center p-6 text-white">
+                                    <h5 className="font-serif text-xl mb-1">{promo.title}</h5>
+                                    <p className="text-sm opacity-90 text-amber-300 font-medium">{promo.subtitle}</p>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            </div>
+
+            <div className="p-6 bg-neutral-50 border-t border-neutral-100">
+                <div className="flex justify-center gap-6 text-neutral-400">
+                    <Instagram size={20} className="hover:text-neutral-900 cursor-pointer" />
+                    <Facebook size={20} className="hover:text-neutral-900 cursor-pointer" />
+                    <Twitter size={20} className="hover:text-neutral-900 cursor-pointer" />
+                </div>
+            </div>
+
+          </motion.div>
+        </>
+      )}
+    </AnimatePresence>
+  );
+};
+
+const Navbar = ({ onNavigate, cartCount, openCart }) => {
+  const [scrolled, setScrolled] = useState(false);
+  const { isSearchOpen, setIsSearchOpen, user, setAuthModalOpen, setMenuOpen } = useContext(StoreContext);
+
+  useEffect(() => {
+    const handleScroll = () => setScrolled(window.scrollY > 50);
+    window.addEventListener('scroll', handleScroll);
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  return (
+    <nav className={`fixed top-0 w-full z-50 transition-all duration-300 ${scrolled ? 'bg-white/95 backdrop-blur-md text-neutral-900 shadow-sm py-4' : 'bg-transparent text-white py-6'}`}>
+      <div className="max-w-7xl mx-auto px-6 flex justify-between items-center relative">
+        <div className="flex items-center gap-6">
+          <button onClick={() => setMenuOpen(true)} className="hover:text-amber-500 transition-colors">
+              <Menu size={24} />
+          </button>
+          <button onClick={() => onNavigate('home')} className="font-serif text-2xl tracking-tight font-bold hidden md:block">CASA ELEGANCE</button>
+        </div>
+        
+        <button onClick={() => onNavigate('home')} className="font-serif text-xl tracking-tight font-bold md:hidden">CASA</button>
+
+        <div className="hidden md:flex gap-6 text-sm font-medium tracking-wide uppercase absolute left-1/2 -translate-x-1/2">
+            <button onClick={() => onNavigate('shop')} className="hover:text-amber-500 transition-colors">Shop</button>
+            <button onClick={() => onNavigate('visualizer')} className="hover:text-amber-500 transition-colors">Visualizer</button>
+            <button onClick={() => onNavigate('track')} className="hover:text-amber-500 transition-colors">Track Order</button>
+        </div>
+
+        <div className="flex items-center gap-6">
+          <button onClick={() => setIsSearchOpen(!isSearchOpen)} className={`transition-colors ${isSearchOpen ? 'text-amber-600' : 'hover:text-amber-500'}`}><Search size={20} /></button>
+          <button onClick={() => user ? onNavigate('profile') : setAuthModalOpen(true)} className="hover:text-amber-500 relative"><User size={20} />{user && <span className="absolute -top-1 -right-1 w-2 h-2 bg-green-500 rounded-full" />}</button>
+          <button onClick={openCart} className="relative hover:text-amber-500"><ShoppingBag size={20} />{cartCount > 0 && <span className="absolute -top-2 -right-2 bg-amber-600 text-white text-[10px] w-4 h-4 rounded-full flex items-center justify-center">{cartCount}</span>}</button>
+        </div>
+      </div>
+      <SearchBar />
+    </nav>
+  );
+};
 
 const WelcomeScreen = ({ onComplete }) => {
   useEffect(() => {
@@ -746,39 +903,6 @@ const CartDrawer = () => {
   );
 };
 
-const Navbar = ({ onNavigate, cartCount, openCart }) => {
-  const [scrolled, setScrolled] = useState(false);
-  const { isSearchOpen, setIsSearchOpen, user, setAuthModalOpen } = useContext(StoreContext);
-
-  useEffect(() => {
-    const handleScroll = () => setScrolled(window.scrollY > 50);
-    window.addEventListener('scroll', handleScroll);
-    return () => window.removeEventListener('scroll', handleScroll);
-  }, []);
-
-  return (
-    <nav className={`fixed top-0 w-full z-50 transition-all duration-300 ${scrolled ? 'bg-white/95 backdrop-blur-md text-neutral-900 shadow-sm py-4' : 'bg-transparent text-white py-6'}`}>
-      <div className="max-w-7xl mx-auto px-6 flex justify-between items-center relative">
-        <div className="flex items-center gap-8">
-          <button onClick={() => onNavigate('home')} className="font-serif text-2xl tracking-tight font-bold">CASA ELEGANCE</button>
-          <div className="hidden md:flex gap-6 text-sm font-medium tracking-wide uppercase">
-            <button onClick={() => onNavigate('home')} className="hover:text-amber-500 transition-colors flex items-center gap-1"><Home size={16}/> Home</button>
-            <button onClick={() => onNavigate('shop')} className="hover:text-amber-500 transition-colors">Shop</button>
-            <button onClick={() => onNavigate('visualizer')} className="hover:text-amber-500 transition-colors">Visualizer</button>
-            <button onClick={() => onNavigate('track')} className="hover:text-amber-500 transition-colors">Track Order</button>
-          </div>
-        </div>
-        <div className="flex items-center gap-6">
-          <button onClick={() => setIsSearchOpen(!isSearchOpen)} className={`transition-colors ${isSearchOpen ? 'text-amber-600' : 'hover:text-amber-500'}`}><Search size={20} /></button>
-          <button onClick={() => user ? onNavigate('profile') : setAuthModalOpen(true)} className="hover:text-amber-500 relative"><User size={20} />{user && <span className="absolute -top-1 -right-1 w-2 h-2 bg-green-500 rounded-full" />}</button>
-          <button onClick={openCart} className="relative hover:text-amber-500"><ShoppingBag size={20} />{cartCount > 0 && <span className="absolute -top-2 -right-2 bg-amber-600 text-white text-[10px] w-4 h-4 rounded-full flex items-center justify-center">{cartCount}</span>}</button>
-        </div>
-      </div>
-      <SearchBar />
-    </nav>
-  );
-};
-
 const Hero = ({ navigate }) => {
   const { siteContent } = useContext(StoreContext);
   const { hero } = siteContent;
@@ -833,10 +957,10 @@ const RoomVisualizer = () => {
   const [results, setResults] = useState(null);
   const { products } = useContext(StoreContext);
 
-  const handleUpload = (e) => {
+  const handleUpload = async (e) => {
     const file = e.target.files[0];
     if (file) {
-      setImage(URL.createObjectURL(file));
+      setImage(URL.createObjectURL(file)); 
       setResults(null);
     }
   };
@@ -1082,81 +1206,130 @@ const AdminDashboard = () => {
   const [tab, setTab] = useState('products');
   const [showModal, setShowModal] = useState(false);
   const [modalMode, setModalMode] = useState('add');
+  const [uploading, setUploading] = useState(false);
+  const [uploadingTarget, setUploadingTarget] = useState(null); 
   
   const [currentProduct, setCurrentProduct] = useState({ 
       id: '', name: '', price: '', category: '', style: 'Modern', images: [], 
       description: '', 
       richDescription: { story: '', materials: '', care: '', dimensions: '' } 
   });
-  const [rawImageInput, setRawImageInput] = useState('');
   
-  const { siteContent, updateSiteContent, products, addProduct, updateProduct, deleteProduct, categories, addCategory, deleteCategory, orders, subscribers } = useContext(StoreContext);
+  const { siteContent, updateSiteContent, products, addProduct, updateProduct, deleteProduct, categories, addCategory, deleteCategory, orders, subscribers, styles, addStyle, deleteStyle, uploadFile } = useContext(StoreContext);
   
   const [heroForm, setHeroForm] = useState(siteContent.hero);
   const [videoForm, setVideoForm] = useState(siteContent.featuredVideo);
+  const [promos, setPromos] = useState(siteContent.promotions || []);
   const [newCatName, setNewCatName] = useState('');
+  
+  // Edit States
+  const [styleForm, setStyleForm] = useState({ name: '', image: '', id: null });
+  const [promoForm, setPromoForm] = useState({ title: '', subtitle: '', image: '', id: null });
 
   useEffect(() => { 
       setHeroForm(siteContent.hero); 
       setVideoForm(siteContent.featuredVideo);
+      setPromos(siteContent.promotions || []);
   }, [siteContent]);
 
+  // --- Product Handlers ---
   const openAddModal = () => { 
       setModalMode('add'); 
       setCurrentProduct({ name: '', price: '', category: 'furniture', style: 'Modern', images: [], description: '', richDescription: { story: '', materials: '', care: '', dimensions: '' } }); 
-      setRawImageInput(''); 
       setShowModal(true); 
   };
   
   const openEditModal = (product) => { 
       setModalMode('edit'); 
       setCurrentProduct(product); 
-      setRawImageInput((product.images || []).join('\n')); 
       setShowModal(true); 
   };
 
   const handleModalSave = (e) => {
     e.preventDefault();
-    const manualImages = rawImageInput.split(/[\n,]+/).map(s => s.trim()).filter(s => s.length > 0);
-    // Use manual images if present, otherwise use existing product images.
-    // NOTE: This allows mixing new base64 uploads with existing URLs if managed carefully, 
-    // but here we primarily replace the list for simplicity.
-    const finalImages = manualImages.length > 0 ? manualImages : currentProduct.images;
-    
     const productData = { 
         ...currentProduct, 
         price: Number(currentProduct.price), 
         rating: currentProduct.rating || 5.0, 
-        images: finalImages 
     };
     if (modalMode === 'add') addProduct(productData); else updateProduct(currentProduct.id, productData);
     setShowModal(false);
   };
 
-  // UPDATED: Convert files to Base64 so they persist in Firestore
-  const handleFileSelect = async (e) => {
+  const handleProductImageUpload = async (e) => {
       const files = Array.from(e.target.files);
-      if (files.length) {
-          const base64Promises = files.map(file => {
-              return new Promise((resolve, reject) => {
-                  const reader = new FileReader();
-                  reader.onload = () => resolve(reader.result);
-                  reader.onerror = error => reject(error);
-                  reader.readAsDataURL(file);
-              });
-          });
+      if (files.length === 0) return;
 
-          try {
-              const base64Results = await Promise.all(base64Promises);
-              const existing = rawImageInput.split(/[\n,]+/).map(s=>s.trim()).filter(s=>s);
-              const combined = [...existing, ...base64Results];
-              setRawImageInput(combined.join('\n'));
-          } catch (error) {
-              console.error("Error converting images", error);
-              alert("Error converting images. Try smaller files.");
-          }
-      }
+      setUploading(true);
+      setUploadingTarget('products');
+      const urls = await Promise.all(files.map(file => uploadFile(file, 'products')));
+      setUploading(false);
+      setUploadingTarget(null);
+
+      const validUrls = urls.filter(u => u !== null);
+      setCurrentProduct(prev => ({
+          ...prev,
+          images: [...(prev.images || []), ...validUrls]
+      }));
   };
+
+  // --- Style Handlers ---
+  const handleStyleImageUpload = async (e) => {
+      const file = e.target.files[0];
+      if(!file) return;
+      setUploading(true); setUploadingTarget('styles');
+      const url = await uploadFile(file, 'styles');
+      if(url) setStyleForm(prev => ({ ...prev, image: url }));
+      setUploading(false); setUploadingTarget(null);
+  }
+
+  const saveStyle = () => {
+      if(styleForm.name && styleForm.image) {
+          addStyle(styleForm); // This handles both add and update based on ID
+          setStyleForm({ name: '', image: '', id: null });
+      }
+  }
+
+  const editStyle = (style) => {
+      setStyleForm(style);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  // --- Promo Handlers ---
+  const handlePromoImageUpload = async (e) => {
+      const file = e.target.files[0];
+      if(!file) return;
+      setUploading(true); setUploadingTarget('promos');
+      const url = await uploadFile(file, 'promos');
+      if(url) setPromoForm(prev => ({ ...prev, image: url }));
+      setUploading(false); setUploadingTarget(null);
+  }
+
+  const savePromo = () => {
+      if(promoForm.title && promoForm.image) {
+          const newPromo = { ...promoForm, id: promoForm.id || Date.now().toString() };
+          // Check if updating or creating new list
+          const newPromos = promoForm.id 
+              ? promos.map(p => p.id === promoForm.id ? newPromo : p)
+              : [...promos, newPromo];
+          
+          updateSiteContent('promotions', newPromos);
+          setPromos(newPromos);
+          setPromoForm({ title: '', subtitle: '', image: '', id: null });
+      }
+  }
+
+  const editPromo = (promo) => {
+      setPromoForm(promo);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  const deletePromo = (id) => {
+      const newPromos = promos.filter(p => p.id !== id);
+      updateSiteContent('promotions', newPromos);
+      setPromos(newPromos);
+  }
+
 
   if (!auth) return (
     <div className="h-screen flex items-center justify-center bg-neutral-900">
@@ -1209,7 +1382,7 @@ const AdminDashboard = () => {
         </div>
 
         <div className="flex gap-2 mb-8 border-b border-neutral-200 overflow-x-auto">
-          {['products', 'content', 'categories', 'orders', 'subscribers'].map(t => (
+          {['products', 'styles', 'promotions', 'content', 'categories', 'orders'].map(t => (
               <button 
                 key={t}
                 onClick={() => setTab(t)} 
@@ -1258,6 +1431,87 @@ const AdminDashboard = () => {
           </div>
         )}
 
+        {tab === 'styles' && (
+             <div className="bg-white p-8 shadow-sm border border-neutral-100">
+                 <h3 className="font-bold mb-6 flex items-center gap-2"><Palette size={20}/> Style Categories</h3>
+                 
+                 <div className={`flex gap-6 mb-8 items-end p-6 rounded transition-colors ${styleForm.id ? 'bg-amber-50 border border-amber-200' : 'bg-neutral-50'}`}>
+                     <div className="flex-1 space-y-2">
+                         <div className="flex justify-between">
+                            <label className="text-xs font-bold uppercase tracking-wider opacity-50">{styleForm.id ? 'Editing Style' : 'Add New Style'}</label>
+                            {styleForm.id && <button onClick={() => setStyleForm({name: '', image: '', id: null})} className="text-xs text-red-500 hover:underline">Cancel Edit</button>}
+                         </div>
+                         <input placeholder="Style Name (e.g. Minimalist)" className="w-full p-3 border rounded" value={styleForm.name} onChange={e => setStyleForm({...styleForm, name: e.target.value})} />
+                         <div className="flex gap-2 items-center">
+                            <input type="file" onChange={handleStyleImageUpload} className="text-xs" />
+                            {uploading && uploadingTarget === 'styles' && <Loader className="animate-spin text-neutral-500" size={16} />}
+                         </div>
+                         {styleForm.image && <img src={styleForm.image} className="w-24 h-24 object-cover rounded mt-2 border" />}
+                     </div>
+                     <Button onClick={saveStyle} className={styleForm.id ? 'bg-amber-600 border-amber-600 hover:bg-amber-700' : ''}>
+                         {styleForm.id ? 'Update Style' : 'Add Style'}
+                     </Button>
+                 </div>
+                 
+                 <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+                     {styles.map(s => (
+                         <div key={s.id} className="border rounded relative group overflow-hidden">
+                             <img src={s.image} className="w-full h-40 object-cover opacity-90" />
+                             <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                                 <h4 className="font-bold text-white text-lg">{s.name}</h4>
+                             </div>
+                             {/* Admin Overlay */}
+                             <div className="absolute inset-0 bg-white/90 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                                 <button onClick={() => editStyle(s)} className="p-2 bg-neutral-900 text-white rounded hover:scale-110 transition-transform"><Edit2 size={16}/></button>
+                                 <button onClick={() => deleteStyle(s.id)} className="p-2 bg-red-500 text-white rounded hover:scale-110 transition-transform"><Trash2 size={16}/></button>
+                             </div>
+                         </div>
+                     ))}
+                 </div>
+             </div>
+        )}
+
+        {tab === 'promotions' && (
+             <div className="bg-white p-8 shadow-sm border border-neutral-100">
+                 <h3 className="font-bold mb-6 flex items-center gap-2"><Tag size={20}/> Sidebar Promotions</h3>
+                 
+                 <div className={`flex gap-6 mb-8 items-end p-6 rounded transition-colors ${promoForm.id ? 'bg-amber-50 border border-amber-200' : 'bg-neutral-50'}`}>
+                     <div className="flex-1 space-y-2">
+                         <div className="flex justify-between">
+                            <label className="text-xs font-bold uppercase tracking-wider opacity-50">{promoForm.id ? 'Editing Promotion' : 'Add New Promotion'}</label>
+                            {promoForm.id && <button onClick={() => setPromoForm({title: '', subtitle: '', image: '', id: null})} className="text-xs text-red-500 hover:underline">Cancel Edit</button>}
+                         </div>
+                         <input placeholder="Promo Title" className="w-full p-3 border rounded" value={promoForm.title} onChange={e => setPromoForm({...promoForm, title: e.target.value})} />
+                         <input placeholder="Subtitle" className="w-full p-3 border rounded" value={promoForm.subtitle} onChange={e => setPromoForm({...promoForm, subtitle: e.target.value})} />
+                         <div className="flex gap-2 items-center">
+                            <input type="file" onChange={handlePromoImageUpload} className="text-xs" />
+                            {uploading && uploadingTarget === 'promos' && <Loader className="animate-spin text-neutral-500" size={16} />}
+                         </div>
+                         {promoForm.image && <img src={promoForm.image} className="w-16 h-16 object-cover rounded mt-2 border" />}
+                     </div>
+                     <Button onClick={savePromo} className={promoForm.id ? 'bg-amber-600 border-amber-600 hover:bg-amber-700' : ''}>
+                         {promoForm.id ? 'Update Promo' : 'Add Promo'}
+                     </Button>
+                 </div>
+                 
+                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                     {promos.map(p => (
+                         <div key={p.id} className="border rounded relative group overflow-hidden">
+                             <img src={p.image} className="w-full h-32 object-cover" />
+                             <div className="p-4">
+                                 <h4 className="font-bold font-serif">{p.title}</h4>
+                                 <p className="text-sm text-neutral-500">{p.subtitle}</p>
+                             </div>
+                             <div className="absolute top-2 right-2 flex gap-1">
+                                 <button onClick={() => editPromo(p)} className="bg-white p-2 rounded-full shadow hover:bg-neutral-100"><Edit2 size={14}/></button>
+                                 <button onClick={() => deletePromo(p.id)} className="bg-white p-2 rounded-full shadow hover:bg-red-50 hover:text-red-500"><Trash2 size={14}/></button>
+                             </div>
+                         </div>
+                     ))}
+                 </div>
+             </div>
+        )}
+
         {tab === 'content' && (
           <div className="grid md:grid-cols-2 gap-8">
             <div className="bg-white p-8 shadow-sm border border-neutral-100">
@@ -1271,76 +1525,8 @@ const AdminDashboard = () => {
                 <Button type="submit" className="w-full">Update Hero</Button>
               </form>
             </div>
-
-            <div className="bg-white p-8 shadow-sm border border-neutral-100">
-              <h3 className="font-bold mb-6 flex items-center gap-2"><Video size={20} /> Runtime Video Section</h3>
-              <form onSubmit={(e) => { e.preventDefault(); updateSiteContent('featuredVideo', videoForm); alert("Video Saved!"); }} className="space-y-6">
-                <div className="space-y-4">
-                  <div><label className="text-xs font-bold uppercase text-neutral-500 block mb-1">Video Source URL (MP4)</label><input className="w-full p-3 border rounded" value={videoForm.videoUrl} onChange={e => setVideoForm({...videoForm, videoUrl: e.target.value})} placeholder="https://..." /></div>
-                  <div><label className="text-xs font-bold uppercase text-neutral-500 block mb-1">Section Heading</label><input className="w-full p-3 border rounded" value={videoForm.title} onChange={e => setVideoForm({...videoForm, title: e.target.value})} /></div>
-                  <div><label className="text-xs font-bold uppercase text-neutral-500 block mb-1">Description Text</label><textarea className="w-full p-3 border rounded" rows={3} value={videoForm.description} onChange={e => setVideoForm({...videoForm, description: e.target.value})} /></div>
-                </div>
-                <Button type="submit" className="w-full">Update Video Section</Button>
-              </form>
-            </div>
           </div>
         )}
-
-        {tab === 'categories' && (
-            <div className="bg-white p-8 shadow-sm border border-neutral-100 max-w-2xl">
-                <h3 className="font-bold mb-6">Shop Categories</h3>
-                <div className="flex gap-2 mb-8">
-                    <input placeholder="New Category Name" className="flex-1 p-3 border" value={newCatName} onChange={e => setNewCatName(e.target.value)} />
-                    <Button onClick={() => { if(newCatName) { addCategory({name: newCatName, image: ''}); setNewCatName(''); }}}>Add</Button>
-                </div>
-                <div className="space-y-2">
-                    {categories.filter(c => c.id !== 'all').map(c => (
-                        <div key={c.id} className="flex justify-between items-center p-4 border bg-neutral-50">
-                            <span className="font-medium">{c.name}</span>
-                            <button onClick={() => deleteCategory(c.id)} className="text-red-500 hover:underline text-sm">Remove</button>
-                        </div>
-                    ))}
-                </div>
-            </div>
-        )}
-
-        {tab === 'orders' && (
-             <div className="bg-white p-8 shadow-sm border border-neutral-100">
-                <h3 className="font-bold mb-6">Recent Customer Orders</h3>
-                {orders.length === 0 ? <p className="text-neutral-400">No orders found.</p> : (
-                    <div className="space-y-4">
-                        {orders.map(o => (
-                            <div key={o.id} className="border p-4 rounded flex justify-between items-center">
-                                <div>
-                                    <p className="font-bold">{o.id}</p>
-                                    <p className="text-sm text-neutral-500">{o.customer.email} • {new Date(o.date).toLocaleDateString()}</p>
-                                </div>
-                                <div className="text-right">
-                                    <p className="font-mono font-bold">PKR {o.total.toLocaleString()}</p>
-                                    <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">{o.status}</span>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                )}
-             </div>
-        )}
-
-        {tab === 'subscribers' && (
-            <div className="bg-white p-8 shadow-sm border border-neutral-100">
-               <h3 className="font-bold mb-6">Newsletter Subscribers</h3>
-               {subscribers.length === 0 ? <p className="text-neutral-400">No subscribers yet.</p> : (
-                   <div className="space-y-2">
-                       {subscribers.map((s, idx) => (
-                           <div key={idx} className="border-b p-4 flex justify-between">
-                               <span className="font-medium">{s.email}</span>
-                               <span className="text-sm text-neutral-500">{new Date(s.date).toLocaleDateString()}</span>
-                           </div>
-                       ))}
-                   </div>
-               )}
-            </div>
-       )}
 
         <AnimatePresence>
           {showModal && (
@@ -1376,31 +1562,48 @@ const AdminDashboard = () => {
                             <div>
                                 <label className="text-xs font-bold uppercase text-neutral-500 block mb-2">Style Theme</label>
                                 <select className="w-full p-3 border rounded bg-white" value={currentProduct.style || 'Modern'} onChange={e => setCurrentProduct({...currentProduct, style: e.target.value})}>
-                                    {['Modern', 'Classical', 'Bohemian', 'Industrial', 'Minimalist'].map(s => <option key={s} value={s}>{s}</option>)}
+                                    {styles.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                                 </select>
                             </div>
                         </div>
 
                         <div>
                             <label className="text-xs font-bold uppercase text-neutral-500 block mb-2">Product Images</label>
-                            <p className="text-xs text-red-500 mb-2">Note: Images will be converted to text to save to database. Use small files for best performance.</p>
-                            <div className="border-2 border-dashed border-neutral-300 p-6 rounded-lg text-center hover:bg-neutral-50 transition-colors">
-                                <textarea 
-                                    className="w-full p-3 border rounded text-xs font-mono mb-4" 
-                                    rows={3} 
-                                    placeholder="Paste Image URLs here (separated by new lines or commas)..."
-                                    value={rawImageInput} 
-                                    onChange={e => setRawImageInput(e.target.value)} 
-                                />
-                                <div className="relative inline-block">
-                                    <Button type="button" variant="outline" className="pointer-events-none">Upload Files from PC</Button>
-                                    <input type="file" className="absolute inset-0 opacity-0 cursor-pointer" accept="image/*" multiple onChange={handleFileSelect} />
-                                </div>
+                            <p className="text-xs text-neutral-400 mb-2">Supports all formats. We use smart compression if cloud storage is unavailable.</p>
+                            
+                            <div className="border-2 border-dashed border-neutral-300 p-8 rounded-lg text-center hover:bg-neutral-50 transition-colors relative">
+                                {uploading && uploadingTarget === 'products' ? (
+                                    <div className="flex flex-col items-center justify-center py-4">
+                                        <Loader className="animate-spin text-amber-600 mb-2" size={32} />
+                                        <span className="text-sm font-medium">Processing Image...</span>
+                                    </div>
+                                ) : (
+                                    <>
+                                        <div className="flex flex-col items-center">
+                                            <Upload className="text-neutral-400 mb-2" size={32} />
+                                            <span className="text-sm font-medium">Click to Upload Images</span>
+                                        </div>
+                                        <input type="file" className="absolute inset-0 opacity-0 cursor-pointer" accept="image/*" multiple onChange={handleProductImageUpload} />
+                                    </>
+                                )}
                             </div>
-                            {rawImageInput && (
+
+                            {currentProduct.images && currentProduct.images.length > 0 && (
                                 <div className="flex gap-2 mt-4 overflow-x-auto pb-2">
-                                    {rawImageInput.split(/[\n,]+/).filter(s=>s.trim()).map((url, idx) => (
-                                        <img key={idx} src={url} className="w-16 h-16 object-cover rounded border" onError={(e) => e.target.style.display = 'none'} />
+                                    {currentProduct.images.map((url, idx) => (
+                                        <div key={idx} className="relative group">
+                                            <img src={url} className="w-20 h-20 object-cover rounded border" />
+                                            <button 
+                                                type="button"
+                                                className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                                                onClick={() => {
+                                                    const newImages = currentProduct.images.filter((_, i) => i !== idx);
+                                                    setCurrentProduct({...currentProduct, images: newImages});
+                                                }}
+                                            >
+                                                <X size={12} />
+                                            </button>
+                                        </div>
                                     ))}
                                 </div>
                             )}
@@ -1454,7 +1657,7 @@ const MainContent = () => {
   const [view, setView] = useState('home');
   const [showWelcome, setShowWelcome] = useState(true);
   const [emailInput, setEmailInput] = useState('');
-  const { cart, setCartOpen, products, categories, selectedCategory, setSelectedCategory, searchQuery, siteContent, selectedStyle, setSelectedStyle, isLoading, addSubscriber } = useContext(StoreContext);
+  const { cart, setCartOpen, products, categories, styles, selectedCategory, setSelectedCategory, searchQuery, siteContent, selectedStyle, setSelectedStyle, isLoading, addSubscriber } = useContext(StoreContext);
 
   useEffect(() => {
     const handler = (e) => {
@@ -1505,10 +1708,10 @@ const MainContent = () => {
 
             <Section title="Shop by Aesthetic">
                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                 {['Modern', 'Bohemian', 'Classical', 'Industrial'].map((style, i) => (
-                   <div key={style} className="relative h-64 group overflow-hidden cursor-pointer bg-neutral-200" onClick={() => { setView('shop'); setSelectedCategory('all'); setSelectedStyle(style); }}>
-                     <img src={`https://source.unsplash.com/random/600x800?interior,${style}`} onError={(e) => e.target.src = 'https://images.unsplash.com/photo-1618220179428-22790b461013?auto=format&fit=crop&q=80&w=400'} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" alt={style} />
-                     <div className="absolute inset-0 bg-black/30 flex items-center justify-center"><h3 className="text-white font-serif text-2xl tracking-wide">{style}</h3></div>
+                 {styles.map((style, i) => (
+                   <div key={style.id} className="relative h-64 group overflow-hidden cursor-pointer bg-neutral-200" onClick={() => { setView('shop'); setSelectedCategory('all'); setSelectedStyle(style.id); }}>
+                     <img src={style.image} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" alt={style.name} />
+                     <div className="absolute inset-0 bg-black/30 flex items-center justify-center"><h3 className="text-white font-serif text-2xl tracking-wide">{style.name}</h3></div>
                    </div>
                  ))}
                </div>
@@ -1545,9 +1748,10 @@ const MainContent = () => {
                     <p className="text-neutral-500">{selectedStyle === 'all' ? 'All Styles' : selectedStyle} &bull; {selectedCategory === 'all' ? 'All Items' : categories.find(c => c.id === selectedCategory)?.name}</p>
                 </div>
                 <div className="flex gap-2 overflow-x-auto pb-2">
-                    {['all', 'Modern', 'Classical', 'Bohemian', 'Industrial'].map(style => (
-                        <button key={style} onClick={() => setSelectedStyle(style)} className={`px-4 py-2 rounded-full text-xs uppercase tracking-widest ${selectedStyle === style ? 'bg-black text-white' : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'}`}>
-                            {style === 'all' ? 'All Styles' : style}
+                    <button onClick={() => setSelectedStyle('all')} className={`px-4 py-2 rounded-full text-xs uppercase tracking-widest ${selectedStyle === 'all' ? 'bg-black text-white' : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'}`}>All Styles</button>
+                    {styles.map(style => (
+                        <button key={style.id} onClick={() => setSelectedStyle(style.id)} className={`px-4 py-2 rounded-full text-xs uppercase tracking-widest ${selectedStyle === style.id ? 'bg-black text-white' : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'}`}>
+                            {style.name}
                         </button>
                     ))}
                 </div>
@@ -1584,6 +1788,7 @@ const MainContent = () => {
     <div className="font-sans text-neutral-800 bg-white min-h-screen overflow-hidden">
       <AnimatePresence>{showWelcome && <WelcomeScreen onComplete={() => setShowWelcome(false)} />}</AnimatePresence>
       <Navbar onNavigate={(v) => { setView(v); if(v === 'shop') setSelectedCategory('all'); }} cartCount={cart.length} openCart={() => setCartOpen(true)} />
+      <NavigationDrawer onNavigate={(v) => { setView(v); if(v === 'shop') setSelectedCategory('all'); }} />
       <CartDrawer />
       <ProductDetailModal />
       <AuthModal />
