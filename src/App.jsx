@@ -17,10 +17,6 @@ import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 // 0. UTILITIES (Professional Image Handler)
 // ==========================================
 
-/**
- * professionally compresses images to ensure they fit in Firestore
- * while maintaining good visual quality for web display.
- */
 const compressImage = (file) => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -30,7 +26,6 @@ const compressImage = (file) => {
       img.src = event.target.result;
       img.onload = () => {
         const canvas = document.createElement('canvas');
-        // Max dimension 800px is perfect for web product cards
         let width = img.width;
         let height = img.height;
         const MAX_SIZE = 800;
@@ -52,8 +47,6 @@ const compressImage = (file) => {
 
         const ctx = canvas.getContext('2d');
         ctx.drawImage(img, 0, 0, width, height);
-        
-        // Compress to JPEG at 0.6 quality (High visual quality, low file size)
         resolve(canvas.toDataURL('image/jpeg', 0.6));
       };
       img.onerror = (error) => reject(error);
@@ -132,7 +125,6 @@ const INITIAL_SITE_CONTENT = {
     title: "Curated Living \n for the Modern Soul",
     buttonText: "Explore Collection",
     image: "https://images.unsplash.com/photo-1600210492486-724fe5c67fb0?auto=format&fit=crop&q=80&w=2000",
-    videoUrl: "", 
   },
   featuredVideo: {
     title: "Experience the Mood",
@@ -144,7 +136,12 @@ const INITIAL_SITE_CONTENT = {
   promotions: [
     { id: 'promo1', title: 'Summer Solstice', subtitle: 'Up to 30% Off', image: 'https://images.unsplash.com/photo-1556228453-efd6c1ff04f6?auto=format&fit=crop&q=80&w=400' },
     { id: 'promo2', title: 'New Arrivals', subtitle: 'Explore the Fresh Collection', image: 'https://images.unsplash.com/photo-1567016432779-094069958ea5?auto=format&fit=crop&q=80&w=400' }
-  ]
+  ],
+  contact: {
+    address: "Phase 6, DHA, Lahore, Pakistan",
+    phone: "+92 300 1234567",
+    email: "concierge@casaelegance.pk"
+  }
 };
 
 // ==========================================
@@ -154,7 +151,6 @@ const INITIAL_SITE_CONTENT = {
 const StoreContext = createContext();
 
 const StoreProvider = ({ children }) => {
-  // State
   const [cart, setCart] = useState([]);
   const [cartOpen, setCartOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false); 
@@ -175,7 +171,6 @@ const StoreProvider = ({ children }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [subscribers, setSubscribers] = useState([]);
 
-  // --- FIREBASE SYNC ON LOAD ---
   useEffect(() => {
     if (!db) return; 
 
@@ -220,9 +215,6 @@ const StoreProvider = ({ children }) => {
     setTimeout(() => setNotification(null), 3000);
   };
 
-  // --- PROFESSIONAL UPLOAD HELPER ---
-  // Guarantees persistence by using highly optimized base64 strings stored in Firestore
-  // This bypasses all CORS/Permissions issues with Cloud Storage in previews.
   const uploadFile = async (file, path) => {
       try {
           const base64 = await compressImage(file);
@@ -234,7 +226,24 @@ const StoreProvider = ({ children }) => {
       }
   };
 
-  // --- CART ACTIONS ---
+  // Helper for actual video file upload to Storage
+  const uploadVideoFile = async (file) => {
+    if (!storage) {
+        showNotification("Storage not configured for Video", "error");
+        return null;
+    }
+    try {
+        const videoRef = ref(storage, `videos/${Date.now()}_${file.name}`);
+        const snapshot = await uploadBytes(videoRef, file);
+        const url = await getDownloadURL(snapshot.ref);
+        return url;
+    } catch (error) {
+        console.error("Video upload failed", error);
+        showNotification("Video upload failed", "error");
+        return null;
+    }
+  };
+
   const addToCart = (product) => {
     setCart(prev => {
       const existing = prev.find(item => item.id === product.id);
@@ -276,9 +285,6 @@ const StoreProvider = ({ children }) => {
   const cartTotal = useMemo(() => {
     return cart.reduce((total, item) => total + (item.price * item.qty), 0);
   }, [cart]);
-
-
-  // --- DATABASE ACTIONS ---
 
   const addOrder = async (orderData) => {
     setOrders(prev => [orderData, ...prev]);
@@ -341,18 +347,14 @@ const StoreProvider = ({ children }) => {
       showNotification("Category removed", "info");
   };
 
-  // -- Style Actions (Updated Logic) --
   const addStyle = async (style) => {
-      // Use existing ID if editing, or create new one based on name
       const id = style.id || style.name.replace(/\s+/g, '-').toLowerCase();
       const newStyle = { ...style, id };
-      
       setStyles(prev => {
           const exists = prev.find(s => s.id === id);
           if (exists) return prev.map(s => s.id === id ? newStyle : s);
           return [...prev, newStyle];
       });
-
       if (db) await setDoc(doc(db, "styles", id), newStyle);
       showNotification("Style saved successfully");
   };
@@ -365,15 +367,12 @@ const StoreProvider = ({ children }) => {
       }
   }
   
-  // -- Content Actions (Promos etc) --
   const updateSiteContent = async (section, newData) => {
-    // Optimistic Update
     setSiteContent(prev => ({ ...prev, [section]: newData }));
     if (db) await setDoc(doc(db, "content", section), newData);
     showNotification("Content updated successfully");
   };
 
-  // --- AUTH ACTIONS ---
   const login = async (email, name) => {
     setIsLoading(true);
     setTimeout(() => {
@@ -405,7 +404,7 @@ const StoreProvider = ({ children }) => {
       user, setUser, login, logout, authModalOpen, setAuthModalOpen,
       searchQuery, setSearchQuery, isSearchOpen, setIsSearchOpen,
       notification, showNotification,
-      isLoading, uploadFile,
+      isLoading, uploadFile, uploadVideoFile,
       subscribers, addSubscriber
     }}>
       {children}
@@ -550,7 +549,7 @@ const NavigationDrawer = ({ onNavigate }) => {
   );
 };
 
-const Navbar = ({ onNavigate, cartCount, openCart }) => {
+const Navbar = ({ onNavigate, cartCount, openCart, currentView }) => {
   const [scrolled, setScrolled] = useState(false);
   const { isSearchOpen, setIsSearchOpen, user, setAuthModalOpen, setMenuOpen } = useContext(StoreContext);
 
@@ -564,9 +563,16 @@ const Navbar = ({ onNavigate, cartCount, openCart }) => {
     <nav className={`fixed top-0 w-full z-50 transition-all duration-300 ${scrolled ? 'bg-white/95 backdrop-blur-md text-neutral-900 shadow-sm py-4' : 'bg-transparent text-white py-6'}`}>
       <div className="max-w-7xl mx-auto px-6 flex justify-between items-center relative">
         <div className="flex items-center gap-6">
-          <button onClick={() => setMenuOpen(true)} className="hover:text-amber-500 transition-colors">
-              <Menu size={24} />
-          </button>
+          {currentView !== 'home' ? (
+              <button onClick={() => onNavigate('home')} className="hover:text-amber-500 transition-colors flex items-center gap-2">
+                  <ChevronLeft size={24} />
+                  <span className="hidden md:inline font-bold text-xs uppercase tracking-widest">Back</span>
+              </button>
+          ) : (
+              <button onClick={() => setMenuOpen(true)} className="hover:text-amber-500 transition-colors">
+                  <Menu size={24} />
+              </button>
+          )}
           <button onClick={() => onNavigate('home')} className="font-serif text-2xl tracking-tight font-bold hidden md:block">CASA ELEGANCE</button>
         </div>
         
@@ -700,10 +706,10 @@ const ProductDetailModal = () => {
       >
         <motion.div 
           initial={{ y: 100, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 100, opacity: 0 }}
-          className={`w-full h-full md:h-[90vh] max-w-[1600px] flex flex-col md:flex-row overflow-hidden shadow-2xl ${themeBg}`}
+          className={`w-full h-full md:h-[90vh] max-w-[1400px] flex flex-col md:flex-row overflow-hidden shadow-2xl ${themeBg}`}
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="w-full md:w-[55%] relative h-[40vh] md:h-full bg-black">
+          <div className="w-full md:w-[50%] relative h-[40vh] md:h-full bg-black">
             <img 
               src={images[currentImageIdx]} 
               alt={selectedProduct.name} 
@@ -728,8 +734,8 @@ const ProductDetailModal = () => {
             </button>
           </div>
 
-          <div className={`w-full md:w-[45%] flex flex-col h-full overflow-y-auto custom-scrollbar`}>
-            <div className="p-8 md:p-16 flex-1">
+          <div className={`w-full md:w-[50%] flex flex-col h-full overflow-y-auto custom-scrollbar`}>
+            <div className="p-8 md:p-12 lg:p-16 flex-1">
                 <div className="flex justify-between items-start mb-8">
                     <div>
                         <p className={`text-xs font-bold tracking-[0.2em] uppercase mb-2 ${themeAccent}`}>{selectedProduct.style} Collection</p>
@@ -1215,12 +1221,12 @@ const AdminDashboard = () => {
       richDescription: { story: '', materials: '', care: '', dimensions: '' } 
   });
   
-  const { siteContent, updateSiteContent, products, addProduct, updateProduct, deleteProduct, categories, addCategory, deleteCategory, orders, subscribers, styles, addStyle, deleteStyle, uploadFile } = useContext(StoreContext);
+  const { siteContent, updateSiteContent, products, addProduct, updateProduct, deleteProduct, categories, addCategory, deleteCategory, orders, subscribers, styles, addStyle, deleteStyle, uploadFile, uploadVideoFile } = useContext(StoreContext);
   
   const [heroForm, setHeroForm] = useState(siteContent.hero);
   const [videoForm, setVideoForm] = useState(siteContent.featuredVideo);
   const [promos, setPromos] = useState(siteContent.promotions || []);
-  const [newCatName, setNewCatName] = useState('');
+  const [contactForm, setContactForm] = useState(siteContent.contact || {});
   
   // Edit States
   const [styleForm, setStyleForm] = useState({ name: '', image: '', id: null });
@@ -1230,6 +1236,7 @@ const AdminDashboard = () => {
       setHeroForm(siteContent.hero); 
       setVideoForm(siteContent.featuredVideo);
       setPromos(siteContent.promotions || []);
+      setContactForm(siteContent.contact || {});
   }, [siteContent]);
 
   // --- Product Handlers ---
@@ -1271,6 +1278,19 @@ const AdminDashboard = () => {
           ...prev,
           images: [...(prev.images || []), ...validUrls]
       }));
+  };
+
+  const handleVideoUpload = async (e) => {
+    const file = e.target.files[0];
+    if(!file) return;
+    setUploading(true);
+    setUploadingTarget('video');
+    const url = await uploadVideoFile(file);
+    if (url) {
+        setVideoForm(prev => ({ ...prev, videoUrl: url }));
+    }
+    setUploading(false);
+    setUploadingTarget(null);
   };
 
   // --- Style Handlers ---
@@ -1460,7 +1480,6 @@ const AdminDashboard = () => {
                              <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
                                  <h4 className="font-bold text-white text-lg">{s.name}</h4>
                              </div>
-                             {/* Admin Overlay */}
                              <div className="absolute inset-0 bg-white/90 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
                                  <button onClick={() => editStyle(s)} className="p-2 bg-neutral-900 text-white rounded hover:scale-110 transition-transform"><Edit2 size={16}/></button>
                                  <button onClick={() => deleteStyle(s.id)} className="p-2 bg-red-500 text-white rounded hover:scale-110 transition-transform"><Trash2 size={16}/></button>
@@ -1513,17 +1532,57 @@ const AdminDashboard = () => {
         )}
 
         {tab === 'content' && (
-          <div className="grid md:grid-cols-2 gap-8">
-            <div className="bg-white p-8 shadow-sm border border-neutral-100">
-              <h3 className="font-bold mb-6 flex items-center gap-2"><Monitor size={20} /> Hero Configuration</h3>
-              <form onSubmit={(e) => { e.preventDefault(); updateSiteContent('hero', heroForm); alert("Hero Saved!"); }} className="space-y-6">
-                <div className="space-y-4">
-                  <div><label className="text-xs font-bold uppercase text-neutral-500 block mb-1">Background Image URL</label><input className="w-full p-3 border rounded" value={heroForm.image} onChange={e => setHeroForm({...heroForm, image: e.target.value})} /></div>
-                  <div><label className="text-xs font-bold uppercase text-neutral-500 block mb-1">Main Title</label><textarea className="w-full p-3 border rounded font-serif text-lg" rows={2} value={heroForm.title} onChange={e => setHeroForm({...heroForm, title: e.target.value})} /></div>
-                  <div><label className="text-xs font-bold uppercase text-neutral-500 block mb-1">Subtitle</label><input className="w-full p-3 border rounded" value={heroForm.subtitle} onChange={e => setHeroForm({...heroForm, subtitle: e.target.value})} /></div>
+          <div className="space-y-8">
+            <div className="grid md:grid-cols-2 gap-8">
+                {/* HERO CONFIG */}
+                <div className="bg-white p-8 shadow-sm border border-neutral-100">
+                    <h3 className="font-bold mb-6 flex items-center gap-2"><Monitor size={20} /> Hero Configuration</h3>
+                    <form onSubmit={(e) => { e.preventDefault(); updateSiteContent('hero', heroForm); }} className="space-y-6">
+                        <div className="space-y-4">
+                            <div><label className="text-xs font-bold uppercase text-neutral-500 block mb-1">Background Image URL</label><input className="w-full p-3 border rounded" value={heroForm.image} onChange={e => setHeroForm({...heroForm, image: e.target.value})} /></div>
+                            <div><label className="text-xs font-bold uppercase text-neutral-500 block mb-1">Main Title</label><textarea className="w-full p-3 border rounded font-serif text-lg" rows={2} value={heroForm.title} onChange={e => setHeroForm({...heroForm, title: e.target.value})} /></div>
+                            <div><label className="text-xs font-bold uppercase text-neutral-500 block mb-1">Subtitle</label><input className="w-full p-3 border rounded" value={heroForm.subtitle} onChange={e => setHeroForm({...heroForm, subtitle: e.target.value})} /></div>
+                        </div>
+                        <Button type="submit" className="w-full">Update Hero</Button>
+                    </form>
                 </div>
-                <Button type="submit" className="w-full">Update Hero</Button>
-              </form>
+
+                {/* VIDEO CONFIG */}
+                <div className="bg-white p-8 shadow-sm border border-neutral-100">
+                    <h3 className="font-bold mb-6 flex items-center gap-2"><Video size={20} /> Featured Video</h3>
+                    <form onSubmit={(e) => { e.preventDefault(); updateSiteContent('featuredVideo', videoForm); }} className="space-y-6">
+                        <div className="space-y-4">
+                            <div>
+                                <label className="text-xs font-bold uppercase text-neutral-500 block mb-1">Upload Video File</label>
+                                <div className="border border-dashed border-neutral-300 p-4 rounded text-center">
+                                    {uploading && uploadingTarget === 'video' ? (
+                                        <div className="flex items-center justify-center gap-2 text-amber-600"><Loader className="animate-spin" size={16}/> Uploading...</div>
+                                    ) : (
+                                        <input type="file" accept="video/*" onChange={handleVideoUpload} className="w-full text-sm" />
+                                    )}
+                                </div>
+                                <p className="text-xs text-neutral-400 mt-1">Direct upload to secure database storage.</p>
+                            </div>
+                            <div><label className="text-xs font-bold uppercase text-neutral-500 block mb-1">Current Video URL (Read Only)</label><input disabled className="w-full p-3 border rounded bg-neutral-50 text-neutral-400" value={videoForm.videoUrl || ''} /></div>
+                            <div><label className="text-xs font-bold uppercase text-neutral-500 block mb-1">Title Overlay</label><input className="w-full p-3 border rounded" value={videoForm.title} onChange={e => setVideoForm({...videoForm, title: e.target.value})} /></div>
+                            <div><label className="text-xs font-bold uppercase text-neutral-500 block mb-1">Description</label><input className="w-full p-3 border rounded" value={videoForm.description} onChange={e => setVideoForm({...videoForm, description: e.target.value})} /></div>
+                        </div>
+                        <Button type="submit" className="w-full">Update Video Section</Button>
+                    </form>
+                </div>
+            </div>
+
+            {/* CONTACT INFO CONFIG */}
+            <div className="bg-white p-8 shadow-sm border border-neutral-100">
+                <h3 className="font-bold mb-6 flex items-center gap-2"><Phone size={20} /> Contact Information</h3>
+                <form onSubmit={(e) => { e.preventDefault(); updateSiteContent('contact', contactForm); }} className="space-y-6">
+                    <div className="grid md:grid-cols-3 gap-6">
+                        <div><label className="text-xs font-bold uppercase text-neutral-500 block mb-1">Phone Number</label><input className="w-full p-3 border rounded" value={contactForm.phone || ''} onChange={e => setContactForm({...contactForm, phone: e.target.value})} /></div>
+                        <div><label className="text-xs font-bold uppercase text-neutral-500 block mb-1">Email Address</label><input className="w-full p-3 border rounded" value={contactForm.email || ''} onChange={e => setContactForm({...contactForm, email: e.target.value})} /></div>
+                        <div><label className="text-xs font-bold uppercase text-neutral-500 block mb-1">Physical Address</label><input className="w-full p-3 border rounded" value={contactForm.address || ''} onChange={e => setContactForm({...contactForm, address: e.target.value})} /></div>
+                    </div>
+                    <Button type="submit" className="w-full">Update Contact Info</Button>
+                </form>
             </div>
           </div>
         )}
@@ -1718,7 +1777,7 @@ const MainContent = () => {
             </Section>
             
             <Section title="Featured Collection" className="bg-neutral-50">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">{products.slice(0, 3).map(p => <ProductCard key={p.id} product={p} />)}</div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 items-stretch">{products.slice(0, 3).map(p => <ProductCard key={p.id} product={p} />)}</div>
               <div className="mt-12 text-center"><Button variant="outline" onClick={() => { setView('shop'); setSelectedCategory('all'); }}>View All Products</Button></div>
             </Section>
 
@@ -1787,14 +1846,42 @@ const MainContent = () => {
   return (
     <div className="font-sans text-neutral-800 bg-white min-h-screen overflow-hidden">
       <AnimatePresence>{showWelcome && <WelcomeScreen onComplete={() => setShowWelcome(false)} />}</AnimatePresence>
-      <Navbar onNavigate={(v) => { setView(v); if(v === 'shop') setSelectedCategory('all'); }} cartCount={cart.length} openCart={() => setCartOpen(true)} />
+      <Navbar onNavigate={(v) => { setView(v); if(v === 'shop') setSelectedCategory('all'); }} cartCount={cart.length} openCart={() => setCartOpen(true)} currentView={view} />
       <NavigationDrawer onNavigate={(v) => { setView(v); if(v === 'shop') setSelectedCategory('all'); }} />
       <CartDrawer />
       <ProductDetailModal />
       <AuthModal />
       <NotificationToast />
       <main>{renderView()}</main>
-      <footer className="bg-neutral-950 text-neutral-500 py-16 px-6 border-t border-neutral-900"><div className="max-w-7xl mx-auto grid md:grid-cols-4 gap-12"><div><h4 className="text-white font-serif text-xl mb-6">CASA ELEGANCE</h4><p className="text-sm leading-relaxed">Redefining luxury through minimalist design.</p></div><div><h5 className="text-white uppercase tracking-widest text-xs font-bold mb-6">Support</h5><ul className="space-y-3 text-sm"><li onClick={() => setView('track')} className="cursor-pointer hover:text-white">Track Order</li><li onClick={() => setView('admin')} className="cursor-pointer hover:text-white">Admin Login</li></ul></div><div><h5 className="text-white uppercase tracking-widest text-xs font-bold mb-6">Stay Connected</h5><div className="flex gap-4"><Instagram className="hover:text-amber-500 cursor-pointer" /><Facebook className="hover:text-amber-500 cursor-pointer" /><Twitter className="hover:text-amber-500 cursor-pointer" /></div></div></div><div className="max-w-7xl mx-auto mt-12 pt-8 border-t border-neutral-900 text-center text-xs tracking-widest">© 2025 CASA ELEGANCE. ALL RIGHTS RESERVED.</div></footer>
+      <footer className="bg-neutral-950 text-neutral-500 py-16 px-6 border-t border-neutral-900">
+        <div className="max-w-7xl mx-auto grid md:grid-cols-4 gap-12">
+            <div>
+                <h4 className="text-white font-serif text-xl mb-6">CASA ELEGANCE</h4>
+                <p className="text-sm leading-relaxed">Redefining luxury through minimalist design.</p>
+                <div className="mt-6 space-y-2 text-sm">
+                    {siteContent.contact?.address && <p className="flex items-center gap-2"><MapPin size={14}/> {siteContent.contact.address}</p>}
+                    {siteContent.contact?.phone && <p className="flex items-center gap-2"><Phone size={14}/> {siteContent.contact.phone}</p>}
+                    {siteContent.contact?.email && <p className="flex items-center gap-2"><Mail size={14}/> {siteContent.contact.email}</p>}
+                </div>
+            </div>
+            <div>
+                <h5 className="text-white uppercase tracking-widest text-xs font-bold mb-6">Support</h5>
+                <ul className="space-y-3 text-sm">
+                    <li onClick={() => setView('track')} className="cursor-pointer hover:text-white">Track Order</li>
+                    <li onClick={() => setView('admin')} className="cursor-pointer hover:text-white">Admin Login</li>
+                </ul>
+            </div>
+            <div>
+                <h5 className="text-white uppercase tracking-widest text-xs font-bold mb-6">Stay Connected</h5>
+                <div className="flex gap-4">
+                    <Instagram className="hover:text-amber-500 cursor-pointer" />
+                    <Facebook className="hover:text-amber-500 cursor-pointer" />
+                    <Twitter className="hover:text-amber-500 cursor-pointer" />
+                </div>
+            </div>
+        </div>
+        <div className="max-w-7xl mx-auto mt-12 pt-8 border-t border-neutral-900 text-center text-xs tracking-widest">© 2025 CASA ELEGANCE. ALL RIGHTS RESERVED.</div>
+      </footer>
     </div>
   );
 };
