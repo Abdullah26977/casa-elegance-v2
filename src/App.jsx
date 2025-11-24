@@ -190,6 +190,8 @@ const INITIAL_SITE_CONTENT = {
 
 const StoreContext = createContext();
 
+// --- UPDATED STORE PROVIDER WITH FIREBASE LOGIC ---
+
 const StoreProvider = ({ children }) => {
   // State
   const [cart, setCart] = useState([]);
@@ -209,12 +211,40 @@ const StoreProvider = ({ children }) => {
   const [notification, setNotification] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Helpers
+  // --- FIREBASE SYNC ON LOAD ---
+  useEffect(() => {
+    if (!db) return; // Only run if Firebase is connected
+
+    const fetchData = async () => {
+      try {
+        // 1. Get Products
+        const productsSnapshot = await getDocs(collection(db, "products"));
+        const dbProducts = productsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        if (dbProducts.length > 0) setProducts(dbProducts);
+
+        // 2. Get Categories
+        const catSnapshot = await getDocs(collection(db, "categories"));
+        const dbCategories = catSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        if (dbCategories.length > 0) setCategories(dbCategories);
+
+        // 3. Get Orders
+        const orderSnapshot = await getDocs(collection(db, "orders"));
+        const dbOrders = orderSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setOrders(dbOrders);
+        
+      } catch (error) {
+        console.error("Error fetching data:", error);
+      }
+    };
+    fetchData();
+  }, []);
+
   const showNotification = (message, type = 'success') => {
     setNotification({ message, type });
     setTimeout(() => setNotification(null), 3000);
   };
 
+  // --- CART ACTIONS ---
   const addToCart = (product) => {
     setCart(prev => {
       const existing = prev.find(item => item.id === product.id);
@@ -257,42 +287,100 @@ const StoreProvider = ({ children }) => {
     return cart.reduce((total, item) => total + (item.price * item.qty), 0);
   }, [cart]);
 
-  const addOrder = (orderData) => {
+
+  // --- DATABASE ACTIONS (REAL FIREBASE) ---
+
+  const addOrder = async (orderData) => {
+    // Optimistic update (show immediately)
     setOrders(prev => [orderData, ...prev]);
+    
+    if (db) {
+      try {
+        // Save to Firebase
+        await setDoc(doc(db, "orders", orderData.id), orderData);
+      } catch (e) {
+        console.error("Error saving order: ", e);
+      }
+    }
   };
 
-  const addProduct = (product) => {
+  const addProduct = async (product) => {
       setIsLoading(true);
-      setTimeout(() => {
-        setProducts(prev => [{ ...product, id: Date.now() }, ...prev]);
-        setIsLoading(false);
-        showNotification("Product created successfully");
-      }, 500);
+      const newProduct = { ...product, id: Date.now().toString() }; // String ID is safer for DB
+
+      // Optimistic Update
+      setProducts(prev => [newProduct, ...prev]);
+
+      if (db) {
+        try {
+          await setDoc(doc(db, "products", newProduct.id), newProduct);
+        } catch (e) {
+          console.error("Error adding product: ", e);
+          showNotification("Error saving to database", "error");
+        }
+      }
+
+      setIsLoading(false);
+      showNotification("Product created successfully");
   };
   
-  const updateProduct = (id, updatedData) => {
+  const updateProduct = async (id, updatedData) => {
+    // Optimistic Update
     setProducts(prev => prev.map(p => p.id === id ? { ...p, ...updatedData } : p));
+    
+    if (db) {
+      try {
+        const productRef = doc(db, "products", id.toString());
+        await updateDoc(productRef, updatedData);
+      } catch (e) {
+         console.error("Error updating product: ", e);
+      }
+    }
     showNotification("Product updated");
   };
   
-  const deleteProduct = (id) => {
+  const deleteProduct = async (id) => {
       if(window.confirm("Are you sure you want to delete this product?")) {
+        // Optimistic Update
         setProducts(prev => prev.filter(p => p.id !== id));
+        
+        if (db) {
+          try {
+            await deleteDoc(doc(db, "products", id.toString()));
+          } catch (e) {
+             console.error("Error deleting product: ", e);
+          }
+        }
         showNotification("Product deleted", "info");
       }
   };
   
-  const addCategory = (category) => {
+  const addCategory = async (category) => {
     const id = category.name.toLowerCase().replace(/\s+/g, '-');
-    setCategories(prev => [...prev, { ...category, id }]);
+    const newCat = { ...category, id };
+    
+    setCategories(prev => [...prev, newCat]);
+
+    if (db) {
+        try {
+            await setDoc(doc(db, "categories", id), newCat);
+        } catch (e) { console.error(e); }
+    }
     showNotification("Category added");
   };
   
-  const deleteCategory = (id) => {
+  const deleteCategory = async (id) => {
       setCategories(prev => prev.filter(c => c.id !== id));
+      if (db) {
+          try {
+              await deleteDoc(doc(db, "categories", id));
+          } catch (e) { console.error(e); }
+      }
       showNotification("Category removed", "info");
   };
   
+  // Note: Site Content is complex to save without a specific structure, keeping local for now
+  // but could be saved to a 'settings' collection similarly.
   const updateSiteContent = (section, newData) => {
     setSiteContent(prev => ({
         ...prev,
@@ -301,8 +389,14 @@ const StoreProvider = ({ children }) => {
     showNotification("Site content updated");
   };
 
-  const login = (email, name) => {
+  // --- AUTH ACTIONS ---
+  const login = async (email, name) => {
     setIsLoading(true);
+    
+    // Real Firebase Auth Login (Simplified for demo)
+    // In a real app, you would use signInWithEmailAndPassword(auth, email, password)
+    // For this demo, we simulate a successful login object
+    
     setTimeout(() => {
         setUser({ email, name, id: 'user-123', role: email.includes('admin') ? 'admin' : 'user' });
         setAuthModalOpen(false);
