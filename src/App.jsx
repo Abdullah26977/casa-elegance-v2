@@ -5,7 +5,7 @@ import {
   Instagram, Facebook, Twitter, ShieldCheck, MapPin, Loader,
   Edit2, Trash2, Plus, Save, Image as ImageIcon, LayoutGrid, Monitor, ChevronLeft,
   LogOut, Mail, Bell, Home, Video, Settings, FileText, Layers, RefreshCw,
-  Phone, Calendar, DollarSign, BarChart3, Users, ExternalLink, Info
+  Phone, Calendar, DollarSign, BarChart3, Users, ExternalLink, Info, Send
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { initializeApp } from 'firebase/app';
@@ -28,7 +28,6 @@ const firebaseConfig = {
 
 let db, auth;
 try {
-   
    const app = initializeApp(firebaseConfig);
    db = getFirestore(app);
    auth = getAuth(app);
@@ -106,64 +105,6 @@ const MOCK_PRODUCTS = [
         care: "Professional rug clean only.",
         dimensions: "L: 300cm x W: 80cm"
     } 
-  },
-  { 
-    id: 4, 
-    name: 'Carrara Marble Bust', 
-    price: 126000, 
-    category: 'decor',
-    style: 'Classical', 
-    images: [
-      'https://images.unsplash.com/photo-1576014131341-fe1486cb2475?auto=format&fit=crop&q=80&w=800'
-    ], 
-    rating: 4.7, 
-    reviews: 15,
-    description: 'A modern interpretation of classical Roman sculpture.',
-    richDescription: {
-        story: "Echoing the halls of the Vatican museums, this bust brings intellectual gravitas to any study.",
-        materials: "Italian Carrara Marble, Hand-polished.",
-        care: "Wipe with damp cloth. Avoid acidic cleaners.",
-        dimensions: "H: 45cm x W: 30cm"
-    } 
-  },
-  { 
-    id: 5, 
-    name: 'Lumina Smart Shade', 
-    price: 168000, 
-    category: 'smart-blinds',
-    style: 'Industrial', 
-    images: [
-      'https://images.unsplash.com/photo-1513694203232-719a280e022f?auto=format&fit=crop&q=80&w=800'
-    ], 
-    rating: 4.6, 
-    reviews: 203, 
-    description: 'Voice-activated, solar-powered automated shading.',
-    richDescription: {
-        story: "Technology meets tranquility. Control your environment with a whisper.",
-        materials: "Solar-weave fabric, Aluminum casing.",
-        care: "Dust regularly. Charge battery once every 6 months.",
-        dimensions: "Custom sizing available."
-    } 
-  },
-  { 
-    id: 6, 
-    name: 'Obsidian Coffee Table', 
-    price: 588000, 
-    category: 'furniture',
-    style: 'Modern', 
-    images: [
-      'https://images.unsplash.com/photo-1603502568600-b69512686851?auto=format&fit=crop&q=80&w=800',
-      'https://images.unsplash.com/photo-1533090161767-e6ffed986c88?auto=format&fit=crop&q=80&w=800'
-    ], 
-    rating: 4.9, 
-    reviews: 56, 
-    description: 'Solid volcanic glass top with industrial steel base.',
-    richDescription: {
-        story: "Forged from the earth itself, the volcanic glass top is as durable as it is beautiful.",
-        materials: "Tempered Obsidian Glass, Blackened Steel legs.",
-        care: "Use coasters. Clean with glass cleaner.",
-        dimensions: "Dia: 110cm x H: 40cm"
-    } 
   }
 ];
 
@@ -190,8 +131,6 @@ const INITIAL_SITE_CONTENT = {
 
 const StoreContext = createContext();
 
-// --- UPDATED STORE PROVIDER WITH FIREBASE LOGIC ---
-
 const StoreProvider = ({ children }) => {
   // State
   const [cart, setCart] = useState([]);
@@ -210,6 +149,7 @@ const StoreProvider = ({ children }) => {
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [notification, setNotification] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [subscribers, setSubscribers] = useState([]);
 
   // --- FIREBASE SYNC ON LOAD ---
   useEffect(() => {
@@ -232,6 +172,12 @@ const StoreProvider = ({ children }) => {
         const dbOrders = orderSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         setOrders(dbOrders);
         
+        // 4. Get Subscribers (if admin)
+        // Ideally this should be behind admin check
+        const subSnapshot = await getDocs(collection(db, "subscribers"));
+        const dbSubs = subSnapshot.docs.map(doc => doc.data());
+        setSubscribers(dbSubs);
+
       } catch (error) {
         console.error("Error fetching data:", error);
       }
@@ -288,15 +234,12 @@ const StoreProvider = ({ children }) => {
   }, [cart]);
 
 
-  // --- DATABASE ACTIONS (REAL FIREBASE) ---
+  // --- DATABASE ACTIONS ---
 
   const addOrder = async (orderData) => {
-    // Optimistic update (show immediately)
     setOrders(prev => [orderData, ...prev]);
-    
     if (db) {
       try {
-        // Save to Firebase
         await setDoc(doc(db, "orders", orderData.id), orderData);
       } catch (e) {
         console.error("Error saving order: ", e);
@@ -304,11 +247,20 @@ const StoreProvider = ({ children }) => {
     }
   };
 
+  const addSubscriber = async (email) => {
+    if (db) {
+        try {
+            await addDoc(collection(db, "subscribers"), { email, date: new Date().toISOString() });
+            setSubscribers(prev => [...prev, { email, date: new Date().toISOString() }]);
+        } catch(e) { console.error(e); }
+    }
+    showNotification("Welcome to the Inner Circle!");
+  };
+
   const addProduct = async (product) => {
       setIsLoading(true);
-      const newProduct = { ...product, id: Date.now().toString() }; // String ID is safer for DB
+      const newProduct = { ...product, id: Date.now().toString() };
 
-      // Optimistic Update
       setProducts(prev => [newProduct, ...prev]);
 
       if (db) {
@@ -325,9 +277,7 @@ const StoreProvider = ({ children }) => {
   };
   
   const updateProduct = async (id, updatedData) => {
-    // Optimistic Update
     setProducts(prev => prev.map(p => p.id === id ? { ...p, ...updatedData } : p));
-    
     if (db) {
       try {
         const productRef = doc(db, "products", id.toString());
@@ -341,9 +291,7 @@ const StoreProvider = ({ children }) => {
   
   const deleteProduct = async (id) => {
       if(window.confirm("Are you sure you want to delete this product?")) {
-        // Optimistic Update
         setProducts(prev => prev.filter(p => p.id !== id));
-        
         if (db) {
           try {
             await deleteDoc(doc(db, "products", id.toString()));
@@ -379,8 +327,6 @@ const StoreProvider = ({ children }) => {
       showNotification("Category removed", "info");
   };
   
-  // Note: Site Content is complex to save without a specific structure, keeping local for now
-  // but could be saved to a 'settings' collection similarly.
   const updateSiteContent = (section, newData) => {
     setSiteContent(prev => ({
         ...prev,
@@ -392,11 +338,6 @@ const StoreProvider = ({ children }) => {
   // --- AUTH ACTIONS ---
   const login = async (email, name) => {
     setIsLoading(true);
-    
-    // Real Firebase Auth Login (Simplified for demo)
-    // In a real app, you would use signInWithEmailAndPassword(auth, email, password)
-    // For this demo, we simulate a successful login object
-    
     setTimeout(() => {
         setUser({ email, name, id: 'user-123', role: email.includes('admin') ? 'admin' : 'user' });
         setAuthModalOpen(false);
@@ -424,7 +365,8 @@ const StoreProvider = ({ children }) => {
       user, setUser, login, logout, authModalOpen, setAuthModalOpen,
       searchQuery, setSearchQuery, isSearchOpen, setIsSearchOpen,
       notification, showNotification,
-      isLoading
+      isLoading,
+      subscribers, addSubscriber
     }}>
       {children}
     </StoreContext.Provider>
@@ -1148,7 +1090,7 @@ const AdminDashboard = () => {
   });
   const [rawImageInput, setRawImageInput] = useState('');
   
-  const { siteContent, updateSiteContent, products, addProduct, updateProduct, deleteProduct, categories, addCategory, deleteCategory, orders } = useContext(StoreContext);
+  const { siteContent, updateSiteContent, products, addProduct, updateProduct, deleteProduct, categories, addCategory, deleteCategory, orders, subscribers } = useContext(StoreContext);
   
   const [heroForm, setHeroForm] = useState(siteContent.hero);
   const [videoForm, setVideoForm] = useState(siteContent.featuredVideo);
@@ -1176,7 +1118,11 @@ const AdminDashboard = () => {
   const handleModalSave = (e) => {
     e.preventDefault();
     const manualImages = rawImageInput.split(/[\n,]+/).map(s => s.trim()).filter(s => s.length > 0);
+    // Use manual images if present, otherwise use existing product images.
+    // NOTE: This allows mixing new base64 uploads with existing URLs if managed carefully, 
+    // but here we primarily replace the list for simplicity.
     const finalImages = manualImages.length > 0 ? manualImages : currentProduct.images;
+    
     const productData = { 
         ...currentProduct, 
         price: Number(currentProduct.price), 
@@ -1187,13 +1133,28 @@ const AdminDashboard = () => {
     setShowModal(false);
   };
 
-  const handleFileSelect = (e) => {
+  // UPDATED: Convert files to Base64 so they persist in Firestore
+  const handleFileSelect = async (e) => {
       const files = Array.from(e.target.files);
       if (files.length) {
-          const urls = files.map(f => URL.createObjectURL(f));
-          const existing = rawImageInput.split(/[\n,]+/).map(s=>s.trim()).filter(s=>s);
-          const combined = [...existing, ...urls];
-          setRawImageInput(combined.join('\n'));
+          const base64Promises = files.map(file => {
+              return new Promise((resolve, reject) => {
+                  const reader = new FileReader();
+                  reader.onload = () => resolve(reader.result);
+                  reader.onerror = error => reject(error);
+                  reader.readAsDataURL(file);
+              });
+          });
+
+          try {
+              const base64Results = await Promise.all(base64Promises);
+              const existing = rawImageInput.split(/[\n,]+/).map(s=>s.trim()).filter(s=>s);
+              const combined = [...existing, ...base64Results];
+              setRawImageInput(combined.join('\n'));
+          } catch (error) {
+              console.error("Error converting images", error);
+              alert("Error converting images. Try smaller files.");
+          }
       }
   };
 
@@ -1240,15 +1201,15 @@ const AdminDashboard = () => {
             </div>
             <div className="bg-white p-6 shadow-sm border border-neutral-100 flex items-center justify-between">
                 <div>
-                    <p className="text-neutral-500 text-xs font-bold uppercase tracking-wider">Products</p>
-                    <p className="text-2xl font-mono mt-2">{products.length}</p>
+                    <p className="text-neutral-500 text-xs font-bold uppercase tracking-wider">Subscribers</p>
+                    <p className="text-2xl font-mono mt-2">{subscribers.length}</p>
                 </div>
-                <div className="bg-amber-50 p-3 rounded-full text-amber-600"><Package size={24}/></div>
+                <div className="bg-purple-50 p-3 rounded-full text-purple-600"><Mail size={24}/></div>
             </div>
         </div>
 
         <div className="flex gap-2 mb-8 border-b border-neutral-200 overflow-x-auto">
-          {['products', 'content', 'categories', 'orders'].map(t => (
+          {['products', 'content', 'categories', 'orders', 'subscribers'].map(t => (
               <button 
                 key={t}
                 onClick={() => setTab(t)} 
@@ -1365,6 +1326,22 @@ const AdminDashboard = () => {
              </div>
         )}
 
+        {tab === 'subscribers' && (
+            <div className="bg-white p-8 shadow-sm border border-neutral-100">
+               <h3 className="font-bold mb-6">Newsletter Subscribers</h3>
+               {subscribers.length === 0 ? <p className="text-neutral-400">No subscribers yet.</p> : (
+                   <div className="space-y-2">
+                       {subscribers.map((s, idx) => (
+                           <div key={idx} className="border-b p-4 flex justify-between">
+                               <span className="font-medium">{s.email}</span>
+                               <span className="text-sm text-neutral-500">{new Date(s.date).toLocaleDateString()}</span>
+                           </div>
+                       ))}
+                   </div>
+               )}
+            </div>
+       )}
+
         <AnimatePresence>
           {showModal && (
             <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
@@ -1406,6 +1383,7 @@ const AdminDashboard = () => {
 
                         <div>
                             <label className="text-xs font-bold uppercase text-neutral-500 block mb-2">Product Images</label>
+                            <p className="text-xs text-red-500 mb-2">Note: Images will be converted to text to save to database. Use small files for best performance.</p>
                             <div className="border-2 border-dashed border-neutral-300 p-6 rounded-lg text-center hover:bg-neutral-50 transition-colors">
                                 <textarea 
                                     className="w-full p-3 border rounded text-xs font-mono mb-4" 
@@ -1475,7 +1453,8 @@ const AdminDashboard = () => {
 const MainContent = () => {
   const [view, setView] = useState('home');
   const [showWelcome, setShowWelcome] = useState(true);
-  const { cart, setCartOpen, products, categories, selectedCategory, setSelectedCategory, searchQuery, siteContent, selectedStyle, setSelectedStyle, isLoading } = useContext(StoreContext);
+  const [emailInput, setEmailInput] = useState('');
+  const { cart, setCartOpen, products, categories, selectedCategory, setSelectedCategory, searchQuery, siteContent, selectedStyle, setSelectedStyle, isLoading, addSubscriber } = useContext(StoreContext);
 
   useEffect(() => {
     const handler = (e) => {
@@ -1485,6 +1464,15 @@ const MainContent = () => {
     window.addEventListener('navigate', handler);
     return () => window.removeEventListener('navigate', handler);
   }, []);
+
+  const handleSubscribe = () => {
+      if(emailInput && emailInput.includes('@')) {
+          addSubscriber(emailInput);
+          setEmailInput('');
+      } else {
+          alert("Please enter a valid email address.");
+      }
+  };
 
   const filteredProducts = products.filter(p => {
     const matchesCategory = selectedCategory === 'all' || p.category === selectedCategory;
@@ -1535,7 +1523,15 @@ const MainContent = () => {
               <div className="max-w-4xl mx-auto text-center">
                 <h2 className="text-3xl font-serif mb-4">Join the Inner Circle</h2>
                 <p className="text-neutral-600 mb-8">Subscribe to receive early access to new collections and exclusive interior design tips.</p>
-                <div className="flex max-w-md mx-auto gap-2"><input placeholder="Email Address" className="flex-1 p-3 border border-neutral-300 outline-none focus:border-neutral-900" /><Button>Subscribe</Button></div>
+                <div className="flex max-w-md mx-auto gap-2">
+                    <input 
+                        value={emailInput} 
+                        onChange={(e) => setEmailInput(e.target.value)} 
+                        placeholder="Email Address" 
+                        className="flex-1 p-3 border border-neutral-300 outline-none focus:border-neutral-900" 
+                    />
+                    <Button onClick={handleSubscribe}>Subscribe</Button>
+                </div>
               </div>
             </section>
           </>
