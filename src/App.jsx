@@ -17,20 +17,21 @@ import { getFirestore, collection, getDocs, doc, setDoc, addDoc, query, where, u
 // ==========================================
 
 const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
+  apiKey: "AIzaSyCCGLdTjI0Wja6Z-wPGRQpFfLzdeH-xoGQ",
   authDomain: "casa-elegance.firebaseapp.com",
   projectId: "casa-elegance",
   storageBucket: "casa-elegance.firebasestorage.app",
-  messagingSenderId: "SENDER_ID",
-  appId: "APP_ID"
+  messagingSenderId: "393508968730",
+  appId: "1:393508968730:web:b075d1277b5e1cf396b4a3",
+  measurementId: "G-KFTDMCRF4Q"
 };
 
 let db, auth;
 try {
-  // Uncomment to use Firebase
-  // const app = initializeApp(firebaseConfig);
-  // db = getFirestore(app);
-  // auth = getAuth(app);
+   
+   const app = initializeApp(firebaseConfig);
+   db = getFirestore(app);
+   auth = getAuth(app);
 } catch (e) {
   console.log("Firebase not configured, running in MOCK MODE");
 }
