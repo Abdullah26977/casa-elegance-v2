@@ -5,7 +5,8 @@ import {
   Instagram, Facebook, Twitter, ShieldCheck, MapPin, Loader,
   Edit2, Trash2, Plus, Save, Image as ImageIcon, LayoutGrid, Monitor, ChevronLeft,
   LogOut, Mail, Bell, Home, Video, Settings, FileText, Layers, RefreshCw,
-  Phone, Calendar, DollarSign, BarChart3, Users, ExternalLink, Info, Send, Tag, Percent, Palette
+  Phone, Calendar, DollarSign, BarChart3, Users, ExternalLink, Info, Send, Tag, Percent, Palette,
+  Ruler // Added Ruler icon for dimensions
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { initializeApp } from 'firebase/app';
@@ -334,17 +335,27 @@ const StoreProvider = ({ children }) => {
   };
   
   const addCategory = async (category) => {
-    const id = category.name.toLowerCase().replace(/\s+/g, '-');
+    // Generate a simple ID or use a provided one
+    const id = category.id || category.name.toLowerCase().replace(/\s+/g, '-');
     const newCat = { ...category, id };
-    setCategories(prev => [...prev, newCat]);
+    
+    // Check if category exists (logic for update vs add)
+    setCategories(prev => {
+        const exists = prev.find(c => c.id === id);
+        if (exists) return prev.map(c => c.id === id ? newCat : c);
+        return [...prev, newCat];
+    });
+
     if (db) await setDoc(doc(db, "categories", id), newCat);
-    showNotification("Category added");
+    showNotification("Category saved successfully");
   };
   
   const deleteCategory = async (id) => {
-      setCategories(prev => prev.filter(c => c.id !== id));
-      if (db) await deleteDoc(doc(db, "categories", id));
-      showNotification("Category removed", "info");
+      if(window.confirm("Delete this category? Products in this category may lose their association.")) {
+        setCategories(prev => prev.filter(c => c.id !== id));
+        if (db) await deleteDoc(doc(db, "categories", id));
+        showNotification("Category removed", "info");
+      }
   };
 
   const addStyle = async (style) => {
@@ -587,7 +598,7 @@ const Navbar = ({ onNavigate, cartCount, openCart, currentView }) => {
         <div className="flex items-center gap-6">
           <button onClick={() => setIsSearchOpen(!isSearchOpen)} className={`transition-colors ${isSearchOpen ? 'text-amber-600' : 'hover:text-amber-500'}`}><Search size={20} /></button>
           <button onClick={() => user ? onNavigate('profile') : setAuthModalOpen(true)} className="hover:text-amber-500 relative"><User size={20} />{user && <span className="absolute -top-1 -right-1 w-2 h-2 bg-green-500 rounded-full" />}</button>
-          <button onClick={openCart} className="relative hover:text-amber-500"><ShoppingBag size={20} />{cartCount > 0 && <span className="absolute -top-2 -right-2 bg-amber-600 text-white text-[10px] w-4 h-4 rounded-full flex items-center justify-center">{cartCount}</span>}</button>
+          <button onClick={() => openCart} className="relative hover:text-amber-500"><ShoppingBag size={20} />{cartCount > 0 && <span className="absolute -top-2 -right-2 bg-amber-600 text-white text-[10px] w-4 h-4 rounded-full flex items-center justify-center">{cartCount}</span>}</button>
         </div>
       </div>
       <SearchBar />
@@ -961,6 +972,7 @@ const RoomVisualizer = () => {
   const [analyzing, setAnalyzing] = useState(false);
   const [image, setImage] = useState(null);
   const [results, setResults] = useState(null);
+  const [dimensions, setDimensions] = useState(null); // New state for dimensions
   const { products } = useContext(StoreContext);
 
   const handleUpload = async (e) => {
@@ -968,6 +980,7 @@ const RoomVisualizer = () => {
     if (file) {
       setImage(URL.createObjectURL(file)); 
       setResults(null);
+      setDimensions(null);
     }
   };
 
@@ -978,6 +991,11 @@ const RoomVisualizer = () => {
       setAnalyzing(false);
       const randomProducts = products.sort(() => 0.5 - Math.random()).slice(0, 3);
       setResults(randomProducts);
+      // Simulate dimensional analysis
+      setDimensions({
+          width: Math.floor(Math.random() * 5 + 10) + ' ft',
+          length: Math.floor(Math.random() * 5 + 12) + ' ft'
+      });
     }, 3000);
   };
 
@@ -1027,6 +1045,20 @@ const RoomVisualizer = () => {
                   <span className="w-2 h-2 rounded-full bg-green-500"></span>
                   Analysis Complete: <span className="text-neutral-500 text-base font-sans">Modern Minimalist Detected</span>
                 </h3>
+
+                {/* Dimensions Display */}
+                {dimensions && (
+                  <div className="bg-neutral-100 p-4 rounded-lg mb-6 flex items-center gap-4">
+                      <div className="bg-white p-2 rounded-full text-neutral-600">
+                          <Ruler size={24} />
+                      </div>
+                      <div>
+                          <p className="text-xs font-bold uppercase tracking-wider text-neutral-500">Estimated Room Size</p>
+                          <p className="font-mono text-lg font-medium">{dimensions.width} x {dimensions.length}</p>
+                      </div>
+                  </div>
+                )}
+
                 <div className="space-y-4">
                   {results.map((product, idx) => {
                     const thumb = product.images && product.images.length > 0 ? product.images[0] : '';
@@ -1231,6 +1263,7 @@ const AdminDashboard = () => {
   // Edit States
   const [styleForm, setStyleForm] = useState({ name: '', image: '', id: null });
   const [promoForm, setPromoForm] = useState({ title: '', subtitle: '', image: '', id: null });
+  const [categoryForm, setCategoryForm] = useState({ name: '', image: '', id: null }); // Added Category Form State
 
   useEffect(() => { 
       setHeroForm(siteContent.hero); 
@@ -1314,6 +1347,29 @@ const AdminDashboard = () => {
       setStyleForm(style);
       window.scrollTo({ top: 0, behavior: 'smooth' });
   }
+
+  // --- Category Handlers (New) ---
+  const handleCategoryImageUpload = async (e) => {
+      const file = e.target.files[0];
+      if(!file) return;
+      setUploading(true); setUploadingTarget('categories');
+      const url = await uploadFile(file, 'categories');
+      if(url) setCategoryForm(prev => ({ ...prev, image: url }));
+      setUploading(false); setUploadingTarget(null);
+  }
+
+  const saveCategory = () => {
+      if(categoryForm.name) {
+          addCategory(categoryForm);
+          setCategoryForm({ name: '', image: '', id: null });
+      }
+  }
+
+  const editCategory = (category) => {
+      setCategoryForm(category);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
 
   // --- Promo Handlers ---
   const handlePromoImageUpload = async (e) => {
@@ -1483,6 +1539,46 @@ const AdminDashboard = () => {
                              <div className="absolute inset-0 bg-white/90 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
                                  <button onClick={() => editStyle(s)} className="p-2 bg-neutral-900 text-white rounded hover:scale-110 transition-transform"><Edit2 size={16}/></button>
                                  <button onClick={() => deleteStyle(s.id)} className="p-2 bg-red-500 text-white rounded hover:scale-110 transition-transform"><Trash2 size={16}/></button>
+                             </div>
+                         </div>
+                     ))}
+                 </div>
+             </div>
+        )}
+
+        {/* New Categories Tab Implementation */}
+        {tab === 'categories' && (
+             <div className="bg-white p-8 shadow-sm border border-neutral-100">
+                 <h3 className="font-bold mb-6 flex items-center gap-2"><LayoutGrid size={20}/> Product Categories</h3>
+                 
+                 <div className={`flex gap-6 mb-8 items-end p-6 rounded transition-colors ${categoryForm.id ? 'bg-amber-50 border border-amber-200' : 'bg-neutral-50'}`}>
+                     <div className="flex-1 space-y-2">
+                         <div className="flex justify-between">
+                            <label className="text-xs font-bold uppercase tracking-wider opacity-50">{categoryForm.id ? 'Editing Category' : 'Add New Category'}</label>
+                            {categoryForm.id && <button onClick={() => setCategoryForm({name: '', image: '', id: null})} className="text-xs text-red-500 hover:underline">Cancel Edit</button>}
+                         </div>
+                         <input placeholder="Category Name (e.g. Furniture, Blinds)" className="w-full p-3 border rounded" value={categoryForm.name} onChange={e => setCategoryForm({...categoryForm, name: e.target.value})} />
+                         <div className="flex gap-2 items-center">
+                            <input type="file" onChange={handleCategoryImageUpload} className="text-xs" />
+                            {uploading && uploadingTarget === 'categories' && <Loader className="animate-spin text-neutral-500" size={16} />}
+                         </div>
+                         {categoryForm.image && <img src={categoryForm.image} className="w-24 h-24 object-cover rounded mt-2 border" />}
+                     </div>
+                     <Button onClick={saveCategory} className={categoryForm.id ? 'bg-amber-600 border-amber-600 hover:bg-amber-700' : ''}>
+                         {categoryForm.id ? 'Update Category' : 'Add Category'}
+                     </Button>
+                 </div>
+                 
+                 <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+                     {categories.filter(c => c.id !== 'all').map(c => (
+                         <div key={c.id} className="border rounded relative group overflow-hidden">
+                             {c.image ? <img src={c.image} className="w-full h-40 object-cover opacity-90" /> : <div className="w-full h-40 bg-neutral-200 flex items-center justify-center text-neutral-400">No Image</div>}
+                             <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                                 <h4 className="font-bold text-white text-lg">{c.name}</h4>
+                             </div>
+                             <div className="absolute inset-0 bg-white/90 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                                 <button onClick={() => editCategory(c)} className="p-2 bg-neutral-900 text-white rounded hover:scale-110 transition-transform"><Edit2 size={16}/></button>
+                                 <button onClick={() => deleteCategory(c.id)} className="p-2 bg-red-500 text-white rounded hover:scale-110 transition-transform"><Trash2 size={16}/></button>
                              </div>
                          </div>
                      ))}
